@@ -361,15 +361,46 @@ def test_kinect_scan():
     # Show the depth img
     plt.imshow(np.flipud(depth_img), cmap="gray")
     plt.show()
+
+def compare_depth_map():
+    import pybullet as p
+    import pybullet_data
+    # Connect to the pybullet server and get additional data
+    id_server = p.connect(p.GUI)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    # Add object
+    p.loadURDF('plane.urdf')
+    p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
+    # Kinect object
+    kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)])
+    # Scan and visualize
+    depth_img = kinect.scan(p, show_scan=False)
     
+    width = kinect.parameters["xres"]
+    height = kinect.parameters["yres"]
+    fov = kinect.parameters["horiz_fov"]
+    aspect = width / height
+    near = kinect.parameters["min_dist"] 
+    far = kinect.parameters["max_dist"] 
+    
+    view_matrix = p.computeViewMatrix([0., -1.7, 1.2], [0, 0, 0.5], [0, 0, 1])
+    projection_matrix = p.computeProjectionMatrixFOV(fov, aspect, near, far)
+    
+    # Get depth values using the OpenGL renderer
+    images = p.getCameraImage(width,
+                              height,
+                              view_matrix,
+                              projection_matrix,
+                              shadow=True,
+                              renderer=p.ER_BULLET_HARDWARE_OPENGL)
+    rgb_opengl = np.reshape(images[2], (height, width, 4)) * 1. / 255.
+    depth_buffer_opengl = np.reshape(images[3], [height, width])
+    depth_opengl = far * near / (far - (far - near) * depth_buffer_opengl)
+    plt.imshow(depth_opengl, cmap="gray")
+    plt.show()
+
 
 if __name__ == "__main__":
-    test_kinect_scan()
-    """
-    p.loadURDF("D:\\ShapeNetCore.v2\\02876657\\9f2bb4a157164af19a7c9976093a710d\\models\\model_normalized_vhacd.urdf", globalScaling=0.26, basePosition=[0, 0, 0.74], baseOrientation=[np.sin(np.pi/4), 0., 0., np.cos(np.pi/4)])
-    p.loadURDF("C:\\Users\\norma\\Anaconda3\\envs\\robotics\\Lib\\site-packages\\pybullet_data\\table\\table_labo.urdf")
-    p.loadURDF("C:\\Users\\norma\\Anaconda3\\envs\\pybullet\\Lib\\site-packages\\pybullet_data\\plane.urdf")
-    p.loadURDF("D:\\ShapeNetCore.v2\\02876657\\9f2bb4a157164af19a7c9976093a710d\\models\\model_normalized_vhacd.urdf", globalScaling=0.26, basePosition=[0, 0, 0.74], baseOrientation=[np.sin(np.pi/4), 0., 0., np.cos(np.pi/4)])
-    """
+    compare_depth_map()
     
     
