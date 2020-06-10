@@ -248,16 +248,15 @@ class Kinect(object):
         # Loop into small windows
         # It allows to decrease the overhead
         results = np.zeros(shape=(self.parameters["yres"], self.parameters["xres"], 3))
-        
         for i in range(nb_window):
             for j in range(nb_window):
                 ray_to = project_rays[y_win*j:y_win*(j+1), x_win*i:x_win*(i+1), :].reshape((-1, 3))
                 ray_results = pybullet.rayTestBatch([self.parameters["baseline"]]*96*128, ray_to, parentObjectUniqueId=self.kinect_id)
                 hit_frac = [res[2] for res in ray_results]
                 results[y_win*j:y_win*(j+1), x_win*i:x_win*(i+1), :] = np.array(hit_frac).reshape((96, 128, 1))*ray_to.reshape((96, 128, 3))
-        
+
+        # Debug: show the rays
         if show_scan:
-            
             for i in range(results.shape[0]):
                 for j in range(results.shape[1]):
                     if (i%40 == 0) and (j%40==0):
@@ -284,7 +283,6 @@ class Kinect(object):
         valid_idx = intersec_idx & dist_idx
         final_rays = camera_rays[valid_idx] # Shape is (nb_pts, 3)
         camera_coord = np.where(valid_idx)
-
         # Disparity
         nb_rays = final_rays.shape[0]
         noise = np.random.normal(self.parameters["noise_mu"], self.parameters["noise_sigma"], (nb_rays, 1))
@@ -297,7 +295,6 @@ class Kinect(object):
                                self.parameters["flength"]/self.parameters["pixel_width"])
         # Kinect calculates the disparity with an accuracy of 1/8 pixel
         camera_x_quantized = (np.floor(camera_x*8.0)/8.0).reshape((-1, 1))
-        #I don't know if this accurately represents the kinect 
         camera_y_quantized = np.floor(camera_y*8.0)/8.0 
         disparity_quantized = camera_x_quantized + camera_coord[1].reshape((-1, 1))
         disp_idx = camera_coord[1] + self.parameters["xres"]*camera_coord[0]
@@ -408,6 +405,6 @@ def compare_depth_map():
 
 
 if __name__ == "__main__":
-    compare_depth_map()
+    test_kinect_scan()
     
     
