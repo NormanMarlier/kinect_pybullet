@@ -360,6 +360,7 @@ def test_kinect_scan():
     depth_img = kinect.scan(p, show_scan=True)
     # Show the depth img
     plt.imshow(np.flipud(depth_img), cmap="gray")
+    plt.axis("off")
     plt.show()
 
 def compare_depth_map():
@@ -373,17 +374,21 @@ def compare_depth_map():
     p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
     # Kinect object
     kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)])
+    results = p.rayTestBatch([[0, 0, 0]], [[0, 0, -7]], parentObjectUniqueId=kinect.kinect_id)
     # Scan and visualize
-    depth_img = kinect.scan(p, show_scan=False)
+    depth_img = kinect.scan(p, show_scan=True)
+    plt.subplot(121)
+    plt.axis("off")
+    plt.imshow(np.flipud(depth_img), cmap="gray")
     
     width = kinect.parameters["xres"]
     height = kinect.parameters["yres"]
-    fov = kinect.parameters["horiz_fov"]
+    fov = kinect.parameters["vert_fov"]
     aspect = width / height
     near = kinect.parameters["min_dist"] 
     far = kinect.parameters["max_dist"] 
     
-    view_matrix = p.computeViewMatrix([0., -1.7, 1.2], [0, 0, 0.5], [0, 0, 1])
+    view_matrix = p.computeViewMatrix([0., -1.7, 1.2], results[0][3], [0, 0, 1])
     projection_matrix = p.computeProjectionMatrixFOV(fov, aspect, near, far)
     
     # Get depth values using the OpenGL renderer
@@ -396,6 +401,8 @@ def compare_depth_map():
     rgb_opengl = np.reshape(images[2], (height, width, 4)) * 1. / 255.
     depth_buffer_opengl = np.reshape(images[3], [height, width])
     depth_opengl = far * near / (far - (far - near) * depth_buffer_opengl)
+    plt.subplot(122)
+    plt.axis("off")
     plt.imshow(depth_opengl, cmap="gray")
     plt.show()
 
