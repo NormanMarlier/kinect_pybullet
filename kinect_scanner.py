@@ -11,7 +11,10 @@ import zlib
 import math
 import time
 import matplotlib.pyplot as plt
-from perlin_noise import PerlinNoise
+import sys
+sys.path.append('..')
+import kinect_pybullet
+
 
 class KinectDots(object):
     """Use for 9x9 window matching."""
@@ -54,7 +57,7 @@ class Kinect(object):
     WINDOW_INLIER_DISTANCE = 0.1
     threshold_disparity = 0.01
 
-    def __init__(self, pybullet, x, R):
+    def __init__(self, pybullet, x, R, id_server):
         """Constructor.
 
         Parameters
@@ -62,10 +65,13 @@ class Kinect(object):
         x: the (x,y,z) position in world coordinates
         R: the rotation, in quaternions, in world coordinates
         """
+        # Pybullet id server
+        self.id_server = id_server
         # Create multibody for the kinect
-        self.kinect_id = pybullet.loadURDF(".\\kinect_urdf.urdf",
+        self.kinect_id = pybullet.loadURDF(kinect_pybullet.KINECT_URDF,
                                            basePosition=x,
-                                           baseOrientation=R)
+                                           baseOrientation=R,
+                                           physicsClientId=self.id_server)
 
     def get_uv_from_idx(self, idx, res_x, res_y):
         """Calculate the Image coordinates on the sensor for a given ray.
@@ -157,7 +163,7 @@ class Kinect(object):
         disp_data[:] = self.INVALID_DISPARITY
           
         """Highly experimental. Just a quick hack for alexandru"""
-        pnoise = PerlinNoise(size=(res_x,res_y))
+        pnoise = kinect_pybullet.PerlinNoise(size=(res_x,res_y))
         #It is important to reshape it exactly as it was generated (w,h)
         noise_field = (pnoise.getData(scale=32.0)-1.0).reshape((res_x,res_y)) 
         """-------------"""
@@ -217,9 +223,14 @@ class Kinect(object):
             for j in range(nb_window):
                 norm = np.linalg.norm(physical_window[y_win*j:y_win*(j+1), x_win*i:x_win*(i+1), :], axis=-1, keepdims=True)
                 ray_from = (physical_window[y_win*j:y_win*(j+1), x_win*i:x_win*(i+1), :]/norm).reshape((-1, 3))
-                ray_to = ray_from*self.parameters["max_dist"] 
+                # Multiply by 2 the max_dist because the distance can be
+                # actually greater than max dist in a scene
+                ray_to = ray_from*self.parameters["max_dist"] *2
                 
-                ray_results = pybullet.rayTestBatch([[0., 0., 0.]]*96*128, ray_to, parentObjectUniqueId=self.kinect_id, parentLinkIndex=-1)
+                ray_results = pybullet.rayTestBatch([[0., 0., 0.]]*96*128, ray_to,
+                                                    parentObjectUniqueId=self.kinect_id,
+                                                    parentLinkIndex=-1,
+                                                    physicsClientId=self.id_server)
                 hit_frac = [res[2] for res in ray_results]
                 results[y_win*j:y_win*(j+1), x_win*i:x_win*(i+1), :] = np.array(hit_frac).reshape((96, 128, 1))*ray_to.reshape((96, 128, 3))
                 
@@ -228,7 +239,10 @@ class Kinect(object):
             for i in range(results.shape[0]):
                 for j in range(results.shape[1]):
                     if (i%40 == 0) and (j%40==0):
-                        pybullet.addUserDebugLine([0, 0, 0], results[i, j, :].tolist(), [1, 0, 0], parentObjectUniqueId=self.kinect_id)
+                        pybullet.addUserDebugLine([0, 0, 0], results[i, j, :].tolist(),
+                                                  [1, 0, 0],
+                                                  parentObjectUniqueId=self.kinect_id,
+                                                  physicsClientId=self.id_server)
         
         return results
     
@@ -251,7 +265,9 @@ class Kinect(object):
         for i in range(nb_window):
             for j in range(nb_window):
                 ray_to = project_rays[y_win*j:y_win*(j+1), x_win*i:x_win*(i+1), :].reshape((-1, 3))
-                ray_results = pybullet.rayTestBatch([self.parameters["baseline"]]*96*128, ray_to, parentObjectUniqueId=self.kinect_id)
+                ray_results = pybullet.rayTestBatch([self.parameters["baseline"]]*96*128, ray_to,
+                                                    parentObjectUniqueId=self.kinect_id,
+                                                    physicsClientId=self.id_server)
                 hit_frac = [res[2] for res in ray_results]
                 results[y_win*j:y_win*(j+1), x_win*i:x_win*(i+1), :] = np.array(hit_frac).reshape((96, 128, 1))*ray_to.reshape((96, 128, 3))
 
@@ -260,7 +276,10 @@ class Kinect(object):
             for i in range(results.shape[0]):
                 for j in range(results.shape[1]):
                     if (i%40 == 0) and (j%40==0):
-                        pybullet.addUserDebugLine(self.parameters["baseline"], results[i, j, :].tolist(), [0, 1, 0], parentObjectUniqueId=self.kinect_id)
+                        pybullet.addUserDebugLine(self.parameters["baseline"], results[i, j, :].tolist(),
+                                                  [0, 1, 0],
+                                                  parentObjectUniqueId=self.kinect_id,
+                                                  physicsClientId=self.id_server)
         
         return results
     
@@ -336,9 +355,9 @@ class Kinect(object):
         # Add random shifting in the value of depth + gaussian noise that
         # depends on depth values.
         depth_img = self.add_shift_noise(depth_img)
-        # Assure that depth values are positives and lower than "max_dist"
+        # Assure that depth values are positives, {0} U [min_dist, max_dist]
         depth_img[depth_img < self.parameters["min_dist"]] = 0.
-        depth_img[depth_img > self.parameters["max_dist"]] = self.parameters["max_dist"]
+        depth_img[depth_img > self.parameters["max_dist"]] = 0.
 
         return depth_img
 
@@ -352,7 +371,7 @@ def test_kinect_scan():
     p.loadURDF('plane.urdf')
     p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
     # Kinect object
-    kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)])
+    kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)], id_server)
     # Scan and visualize
     depth_img = kinect.scan(p, show_scan=True)
     # Show the depth img
@@ -370,7 +389,7 @@ def compare_depth_map():
     p.loadURDF('plane.urdf')
     p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
     # Kinect object
-    kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)])
+    kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)], id_server)
     results = p.rayTestBatch([[0, 0, 0]], [[0, 0, -7]], parentObjectUniqueId=kinect.kinect_id)
     # Scan and visualize
     depth_img = kinect.scan(p, show_scan=True)
@@ -405,6 +424,27 @@ def compare_depth_map():
 
 
 if __name__ == "__main__":
-    test_kinect_scan()
+    import pybullet as p
+    import pybullet_data
+    # Connect to the pybullet server and get additional data
+    id_server = p.connect(p.GUI)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    # Add object
+    p.loadURDF('plane.urdf')
+    #p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
+    p.loadURDF("C:/Users/norma/Anaconda3/envs/robotics/Lib/site-packages/pybullet_data/table/table_labo.urdf")
+    p.loadURDF("D:\\ShapeNetCore.v2\\02876657\\9f2bb4a157164af19a7c9976093a710d\\models\\model_normalized_vhacd.urdf",
+               globalScaling=0.26, basePosition=[0, 0, 0.74], baseOrientation=[np.sin(np.pi/4), 0., 0., np.cos(np.pi/4)])
+    kinect_pos, kinect_ori = p.multiplyTransforms([0., 0., 0.], [0., 0., np.sin(np.pi/4), np.cos(np.pi/4)],
+                                                  [0., 0., 0.], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)])
+    print(kinect_ori)
+    # Kinect object
+    kinect = Kinect(p, [1.2, 0., 1.2], kinect_ori, id_server)
+    # Scan and visualize
+    depth_img = kinect.scan(p, show_scan=False)
+    # Show the depth img
+    plt.imshow(np.flipud(depth_img), cmap="gray")
+    plt.axis("off")
+    plt.show()
     
     
