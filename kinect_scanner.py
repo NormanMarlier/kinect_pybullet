@@ -378,6 +378,8 @@ def test_kinect_scan():
     plt.imshow(np.flipud(depth_img), cmap="gray")
     plt.axis("off")
     plt.show()
+    # Disconnect from pybullet
+    p.disconnect(id_server)
 
 def compare_depth_map():
     import pybullet as p
@@ -392,9 +394,10 @@ def compare_depth_map():
     kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)], id_server)
     results = p.rayTestBatch([[0, 0, 0]], [[0, 0, -7]], parentObjectUniqueId=kinect.kinect_id)
     # Scan and visualize
-    depth_img = kinect.scan(p, show_scan=True)
+    depth_img = kinect.scan(p, show_scan=False)
     plt.subplot(121)
     plt.axis("off")
+    plt.title("Ray casting rendering")
     plt.imshow(np.flipud(depth_img), cmap="gray")
     
     width = kinect.parameters["xres"]
@@ -420,31 +423,13 @@ def compare_depth_map():
     plt.subplot(122)
     plt.axis("off")
     plt.imshow(depth_opengl, cmap="gray")
+    plt.title("OpenGL z buffer")
     plt.show()
+    p.disconnect(id_server)
 
 
 if __name__ == "__main__":
-    import pybullet as p
-    import pybullet_data
-    # Connect to the pybullet server and get additional data
-    id_server = p.connect(p.GUI)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    # Add object
-    p.loadURDF('plane.urdf')
-    #p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
-    p.loadURDF("C:/Users/norma/Anaconda3/envs/robotics/Lib/site-packages/pybullet_data/table/table_labo.urdf")
-    p.loadURDF("D:\\ShapeNetCore.v2\\02876657\\9f2bb4a157164af19a7c9976093a710d\\models\\model_normalized_vhacd.urdf",
-               globalScaling=0.26, basePosition=[0, 0, 0.74], baseOrientation=[np.sin(np.pi/4), 0., 0., np.cos(np.pi/4)])
-    kinect_pos, kinect_ori = p.multiplyTransforms([0., 0., 0.], [0., 0., np.sin(np.pi/4), np.cos(np.pi/4)],
-                                                  [0., 0., 0.], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)])
-    print(kinect_ori)
-    # Kinect object
-    kinect = Kinect(p, [1.2, 0., 1.2], kinect_ori, id_server)
-    # Scan and visualize
-    depth_img = kinect.scan(p, show_scan=False)
-    # Show the depth img
-    plt.imshow(np.flipud(depth_img), cmap="gray")
-    plt.axis("off")
-    plt.show()
-    
-    
+    # Show the rays casting
+    test_kinect_scan()
+    # Compare to OpenGL buffer
+    compare_depth_map()
