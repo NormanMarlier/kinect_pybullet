@@ -5,7 +5,8 @@
 		<geometry>
 		  <box size="0.25 0.064 0.0381" />
 		</geometry>
-		<material name="Blue" />
+		<!--<material name="Blue" />-->
+		<color rgba="1.0 1.0 1.0 1"/>
 	  </visual>
 	  <inertial>
 		  <mass value="0.2" />
