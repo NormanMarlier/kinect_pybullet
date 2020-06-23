@@ -55,7 +55,7 @@ class Kinect(object):
     kinect_dots = KinectDots()
     INVALID_DISPARITY = 99999999.9
     WINDOW_INLIER_DISTANCE = 0.1
-    threshold_disparity = 0.01
+    threshold_disparity = 0.001
 
     def __init__(self, pybullet, x, R, id_server):
         """Constructor.
@@ -186,12 +186,11 @@ class Kinect(object):
                     if np.sum(valid_dots) > np.sum(dot_window)/1.5:
                         mean = np.sum(window[valid_values])/np.sum(valid_values)
                         differences = np.abs(window-mean)*weights
-                        valids = (differences<self.WINDOW_INLIER_DISTANCE) & valid_dots
+                        valids = (differences < self.WINDOW_INLIER_DISTANCE) & valid_dots
                         pointcount = np.sum(weights[valids])
                         if np.sum(valids) > np.sum(dot_window)/1.5:
-                            accu = window[4,4]
-                            disp_data[y+4,x+4] = np.floor((accu + noise_scale*noise_field[np.int32((x+4)/noise_smooth), np.int32((y+4)/noise_smooth)])*8.0)/8.0
-                            #round(accu*8.0)/8.0 #Values need to be requantified
+                            accu = window[4, 4]
+                            disp_data[y+4, x+4] = np.floor((accu + noise_scale*noise_field[np.int32((x+4)/noise_smooth), np.int32((y+4)/noise_smooth)])*8.0)/8.0
                             interpolation_window = interpolation_map[y:y+9,x:x+9]
                             disp_data_window = disp_data[y:y+9,x:x+9]
                             substitutes = interpolation_window < fill_weights
@@ -202,7 +201,8 @@ class Kinect(object):
         """Emit rays from the projecto of the Kinect.
 
         It takes into account the maximum rays that Pybullet can cast with
-        respect to the resolution of the Kinect."""
+        respect to the resolution of the Kinect.
+        """
         # Split the full window into small windows
         nb_window = 5
         y_win = self.parameters["yres"]//nb_window
@@ -246,7 +246,7 @@ class Kinect(object):
         
         return results
     
-    def emit_camera(self, pybullet, project_rays, show_scan=False):
+    def emit_camera(self, pybullet, project_rays, show_scan=False, add_reflectivity=True):
         """Emit rays from the camera of the Kinect.
         
         It emits ray cast to "project_rays" and check if the collision occurs
@@ -280,8 +280,28 @@ class Kinect(object):
                                                   [0, 1, 0],
                                                   parentObjectUniqueId=self.kinect_id,
                                                   physicsClientId=self.id_server)
+        # Check reflectivity
+        if add_reflectivity:
+            min_reflectivity = self.reflectivity_limit(results)
+            idx_reflectivity = min_reflectivity > 1
+            results[idx_reflectivity] = 0.
         
         return results
+    
+    def reflectivity_limit(self, rays):
+        """Compute the minimum reflectivty that will cause a laser return.
+        
+        Based on:
+        https://github.com/mgschwan/blensor/blob/master/release/scripts/addons/blensor/scan_interface_pure.py
+        """
+        # Distance
+        dist = np.linalg.norm(rays, axis=-1)
+        min_reflectivity = -np.ones(shape=dist.shape)
+        idx = dist >= self.parameters["reflectivity_distance"]
+        min_reflectivity[idx] = self.parameters["reflectivity_limit"] \
+                                + self.parameters["reflectivity_slope"] * (dist[idx]-self.parameters["reflectivity_distance"])
+
+        return min_reflectivity
     
     
     def disparity_map(self, projector_rays, camera_rays):
@@ -302,13 +322,13 @@ class Kinect(object):
         valid_idx = intersec_idx & dist_idx
         final_rays = camera_rays[valid_idx] # Shape is (nb_pts, 3)
         camera_coord = np.where(valid_idx)
+
         # Disparity
         nb_rays = final_rays.shape[0]
         noise = np.random.normal(self.parameters["noise_mu"], self.parameters["noise_sigma"], (nb_rays, 1))
         camera_x = self.get_pixel_from_world(final_rays[:, 0], final_rays[:, 2],
                                self.parameters["flength"]/self.parameters["pixel_width"])
         camera_x = camera_x.reshape((-1, 1)) + noise
-          
 
         camera_y = self.get_pixel_from_world(final_rays[:, 1], final_rays[:, 2],
                                self.parameters["flength"]/self.parameters["pixel_width"])
@@ -318,13 +338,12 @@ class Kinect(object):
         disparity_quantized = camera_x_quantized + camera_coord[1].reshape((-1, 1))
         disp_idx = camera_coord[1] + self.parameters["xres"]*camera_coord[0]
         all_quantized_disparities[disp_idx] = disparity_quantized.reshape((-1))
-        
+
         return all_quantized_disparities, camera_coord
-        
-        
-    def scan(self, pybullet, show_scan=False):
+
+    def scan(self, pybullet, show_scan=False, add_reflectivity=True):
         """Scan with the Kinect model.
-        
+
         1) Emit rays from the projector
         2) Emit rays from the camera to the hit points
         3) Compute the disparity
@@ -334,10 +353,9 @@ class Kinect(object):
         # Rays from projector
         projector_rays = self.emit_projector(pybullet, show_scan)
         # Rays from camera
-        camera_rays = self.emit_camera(pybullet, projector_rays, show_scan)
+        camera_rays = self.emit_camera(pybullet, projector_rays, show_scan, add_reflectivity)
         # Disparity map
         all_quantized_disparities, camera_coord = self.disparity_map(projector_rays, camera_rays)
-
         # Window 9x9 matching for disparity map
         processed_disparities = np.empty(self.parameters["xres"]*self.parameters["yres"])
         self.fast_9x9_window(all_quantized_disparities, self.parameters["xres"],
@@ -373,8 +391,33 @@ def test_kinect_scan():
     # Kinect object
     kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)], id_server)
     # Scan and visualize
-    depth_img = kinect.scan(p, show_scan=True)
+    depth_img = kinect.scan(p, show_scan=False)
     # Show the depth img
+    plt.imshow(np.flipud(depth_img), cmap="gray")
+    plt.axis("off")
+    plt.show()
+    # Disconnect from pybullet
+    p.disconnect(id_server)
+    
+def test_kinect_scan_reflect():
+    import pybullet as p
+    import pybullet_data
+    # Connect to the pybullet server and get additional data
+    id_server = p.connect(p.GUI)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    # Add object
+    p.loadURDF('plane.urdf')
+    p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
+    # Kinect object
+    kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)], id_server)
+    # Scan and visualize
+    depth_img = kinect.scan(p, show_scan=True, add_reflectivity=True)
+    # Show the depth img
+    plt.subplot(121)
+    plt.imshow(np.flipud(depth_img), cmap="gray")
+    plt.axis("off")
+    plt.subplot(122)
+    depth_img = kinect.scan(p, show_scan=False, add_reflectivity=False)
     plt.imshow(np.flipud(depth_img), cmap="gray")
     plt.axis("off")
     plt.show()
@@ -433,3 +476,5 @@ if __name__ == "__main__":
     test_kinect_scan()
     # Compare to OpenGL buffer
     compare_depth_map()
+    
+    
