@@ -44,7 +44,9 @@ class Kinect(object):
 
     """
     # Intrinsic parameters of the kinect
-    parameters = {"max_dist": 6.0, "min_dist": 0.58, "noise_mu": 0.0,
+    # BE CAREFULL : min_dist and max_dist need to be tuned with your real kinect
+    # It can changed with the mode (default or near) and hardware.
+    parameters = {"max_dist": 7.0, "min_dist": 0.4, "noise_mu": 0.0,
                   "noise_sigma": 0.0, "xres": 640, "yres": 480,
                   "flength": 4.73, "reflectivity_distance": 0.0,
                   "reflectivity_limit": 0.01, "reflectivity_slope": 0.16,
@@ -67,11 +69,14 @@ class Kinect(object):
         """
         # Pybullet id server
         self.id_server = id_server
-        # Create multibody for the kinect
+        # Create multibody for the kinecti
         self.kinect_id = pybullet.loadURDF(kinect_pybullet.KINECT_URDF,
                                            basePosition=x,
                                            baseOrientation=R,
                                            physicsClientId=self.id_server)
+        self.noisy_max = self.get_noisy_max(sigma=0.)
+        self.noisy_min = self.get_noisy_min(sigma=0.)
+        self.noisy_flength = self.get_noisy_flength(error=0.)
 
     def get_uv_from_idx(self, idx, res_x, res_y):
         """Calculate the Image coordinates on the sensor for a given ray.
@@ -147,8 +152,28 @@ class Kinect(object):
         sigma = 0.0012 + 0.0019 * (z - 0.4) ** 2
 
         return sigma
+    
+    def get_noisy_min(self, sigma=0.005):
+        """Add gaussian noise to the minimum value of the Kinect."""
+        return np.random.default_rng().normal(self.parameters["min_dist"],
+                                              sigma, 1)
 
-    def fast_9x9_window(self, distances, res_x, res_y, disparity_map, noise_smooth, noise_scale):
+    def get_noisy_max(self, sigma=0.005):
+        """Add gaussian noise to the maximum value of the Kinect."""
+        return np.random.default_rng().normal(self.parameters["max_dist"],
+                                              sigma, 1)
+    
+    def get_noisy_flength(self, error=0.02):
+        """Add noise onto the flenght.
+        
+        Use an uniform distribution between flength +/- error (in %)
+        """
+        low = self.parameters["flength"] - self.parameters["flength"]*error
+        high = self.parameters["flength"] + self.parameters["flength"]*error
+        return np.random.default_rng().uniform(low, high, 1)
+
+    def fast_9x9_window(self, distances, res_x, res_y, disparity_map,
+                        noise_smooth, noise_scale):
         """Fast 9x9 windonw matching for disparity.
 
         This checks a 9x9 window around the point in idx if the depth values
@@ -213,7 +238,7 @@ class Kinect(object):
         x, y = np.meshgrid(np.arange(0, self.parameters["xres"]), np.arange(0, self.parameters["yres"]))
         physical_x = ((x-cx)*self.parameters["pixel_width"]).reshape((self.parameters["yres"], self.parameters["xres"], 1))
         physical_y = ((y-cy)*self.parameters["pixel_height"]).reshape((self.parameters["yres"], self.parameters["xres"], 1))
-        physical_z = -np.ones(shape=(self.parameters["yres"], self.parameters["xres"], 1))*self.parameters["flength"]
+        physical_z = -np.ones(shape=(self.parameters["yres"], self.parameters["xres"], 1))*self.noisy_flength
         physical_window = np.concatenate([physical_x, physical_y, physical_z], axis=-1)
         
         # Loop into small windows
@@ -225,7 +250,7 @@ class Kinect(object):
                 ray_from = (physical_window[y_win*j:y_win*(j+1), x_win*i:x_win*(i+1), :]/norm).reshape((-1, 3))
                 # Multiply by 2 the max_dist because the distance can be
                 # actually greater than max dist in a scene
-                ray_to = ray_from*self.parameters["max_dist"] *2
+                ray_to = ray_from*self.noisy_max_dist *2
                 
                 ray_results = pybullet.rayTestBatch([[0., 0., 0.]]*96*128, ray_to,
                                                     parentObjectUniqueId=self.kinect_id,
@@ -315,8 +340,8 @@ class Kinect(object):
         intersec_idx = results_rays < self.threshold_disparity
         intersec_idx = intersec_idx[:, :, 0] & intersec_idx[:, :, 1] & intersec_idx[:, :, 2]
         # Min-Max distances take into account
-        min_idx = np.abs(camera_rays[:, :, 2]) >= self.parameters["min_dist"]
-        max_idx = np.abs(camera_rays[:, :, 2]) <= self.parameters["max_dist"]
+        min_idx = np.abs(camera_rays[:, :, 2]) >= self.noisy_min_dist
+        max_idx = np.abs(camera_rays[:, :, 2]) <= self.noisy_max_dist
         dist_idx = min_idx & max_idx
         # The ray hit the projected ray, so this is a valid measurement
         valid_idx = intersec_idx & dist_idx
@@ -327,11 +352,11 @@ class Kinect(object):
         nb_rays = final_rays.shape[0]
         noise = np.random.normal(self.parameters["noise_mu"], self.parameters["noise_sigma"], (nb_rays, 1))
         camera_x = self.get_pixel_from_world(final_rays[:, 0], final_rays[:, 2],
-                               self.parameters["flength"]/self.parameters["pixel_width"])
+                               self.noisy_flength/self.parameters["pixel_width"])
         camera_x = camera_x.reshape((-1, 1)) + noise
 
         camera_y = self.get_pixel_from_world(final_rays[:, 1], final_rays[:, 2],
-                               self.parameters["flength"]/self.parameters["pixel_width"])
+                               self.noisy_flength/self.parameters["pixel_width"])
         # Kinect calculates the disparity with an accuracy of 1/8 pixel
         camera_x_quantized = (np.floor(camera_x*8.0)/8.0).reshape((-1, 1))
         camera_y_quantized = np.floor(camera_y*8.0)/8.0 
@@ -341,7 +366,7 @@ class Kinect(object):
 
         return all_quantized_disparities, camera_coord
 
-    def scan(self, pybullet, show_scan=False, add_reflectivity=True):
+    def scan(self, pybullet, show_scan=False, add_reflectivity=True, add_noise=True):
         """Scan with the Kinect model.
 
         1) Emit rays from the projector
@@ -350,6 +375,12 @@ class Kinect(object):
         4) Fast 9x9 windows
         5) Return depth map
         """
+        # Add noise to parameters
+        if add_noise:
+            self.noisy_max_dist = self.get_noisy_max()
+            self.noisy_min_dist = self.get_noisy_min()
+            self.noisy_flength = self.get_noisy_flength()
+        
         # Rays from projector
         projector_rays = self.emit_projector(pybullet, show_scan)
         # Rays from camera
@@ -374,8 +405,8 @@ class Kinect(object):
         # depends on depth values.
         depth_img = self.add_shift_noise(depth_img)
         # Assure that depth values are positives, {0} U [min_dist, max_dist]
-        depth_img[depth_img < self.parameters["min_dist"]] = 0.
-        depth_img[depth_img > self.parameters["max_dist"]] = 0.
+        depth_img[depth_img < self.noisy_min_dist] = 0.
+        depth_img[depth_img > self.noisy_max_dist] = 0.
 
         return depth_img
 
@@ -391,38 +422,14 @@ def test_kinect_scan():
     # Kinect object
     kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)], id_server)
     # Scan and visualize
-    depth_img = kinect.scan(p, show_scan=False)
+    depth_img = kinect.scan(p, show_scan=True)
     # Show the depth img
     plt.imshow(np.flipud(depth_img), cmap="gray")
     plt.axis("off")
     plt.show()
     # Disconnect from pybullet
     p.disconnect(id_server)
-    
-def test_kinect_scan_reflect():
-    import pybullet as p
-    import pybullet_data
-    # Connect to the pybullet server and get additional data
-    id_server = p.connect(p.GUI)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    # Add object
-    p.loadURDF('plane.urdf')
-    p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
-    # Kinect object
-    kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)], id_server)
-    # Scan and visualize
-    depth_img = kinect.scan(p, show_scan=True, add_reflectivity=True)
-    # Show the depth img
-    plt.subplot(121)
-    plt.imshow(np.flipud(depth_img), cmap="gray")
-    plt.axis("off")
-    plt.subplot(122)
-    depth_img = kinect.scan(p, show_scan=False, add_reflectivity=False)
-    plt.imshow(np.flipud(depth_img), cmap="gray")
-    plt.axis("off")
-    plt.show()
-    # Disconnect from pybullet
-    p.disconnect(id_server)
+
 
 def compare_depth_map():
     import pybullet as p
