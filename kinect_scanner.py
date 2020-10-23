@@ -117,20 +117,19 @@ class Kinect(object):
         noisy_image = img.copy()
         ci, ri = np.meshgrid(np.arange(0, img.shape[1], 1),
                              np.arange(0, img.shape[0], 1))
-        col_index = ci + np.random.normal(0, 1, img.shape).astype(np.int32)
-        row_index = ri + np.random.normal(0, 1, img.shape).astype(np.int32)
+        col_index = ci + np.random.normal(0, 0.5, img.shape).astype(np.int32)
+        row_index = ri + np.random.normal(0, 0.5, img.shape).astype(np.int32)
 
         col_index[col_index >= img.shape[1]] = img.shape[1] - 1
         row_index[row_index >= img.shape[0]] = img.shape[0] - 1
         col_index[col_index < 0] = 0
         row_index[row_index < 0] = 0
-
-        depth_noise = np.random.normal(0, self._axial_noise(noisy_image[row_index, col_index]))
-        noisy_img = noisy_image[row_index, col_index] + depth_noise
+        
+        noisy_img = noisy_image[row_index, col_index]
 
         return noisy_img
 
-    def _axial_noise(self, z):
+    def add_axial_noise(self, depth_img):
         """Gaussian deviation for axial noise on depth images.
 
         Paper:
@@ -149,9 +148,12 @@ class Kinect(object):
         -------
         sigma: float, std for axial noise
         """
-        sigma = 0.0012 + 0.0019 * (z - 0.4) ** 2
+        sigma = 0.0012 + 0.0019 * (depth_img - 0.4) ** 2
+        depth_noise = np.random.normal(0, sigma)
+        
+        noisy_img = depth_img + depth_noise
 
-        return sigma
+        return noisy_img
     
     def get_noisy_min(self, sigma=0.005):
         """Add gaussian noise to the minimum value of the Kinect."""
@@ -403,7 +405,8 @@ class Kinect(object):
         depth_img[depth_idx] = -projector_rays[depth_idx][:, 2]
         # Add random shifting in the value of depth + gaussian noise that
         # depends on depth values.
-        depth_img = self.add_shift_noise(depth_img)
+        #depth_img = self.add_shift_noise(depth_img)
+        depth_img = self.add_axial_noise(depth_img)
         # Assure that depth values are positives, {0} U [min_dist, max_dist]
         depth_img[depth_img < self.noisy_min_dist] = 0.
         depth_img[depth_img > self.noisy_max_dist] = 0.
