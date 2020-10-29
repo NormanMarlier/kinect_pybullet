@@ -170,8 +170,8 @@ class Kinect(object):
         
         Use an uniform distribution between flength +/- error (in %)
         """
-        low = self.parameters["flength"] - self.parameters["flength"]*error
-        high = self.parameters["flength"] + self.parameters["flength"]*error
+        low = (1 - error) * self.parameters["flength"]
+        high = (1 + error) * self.parameters["flength"] + self.parameters["flength"]*error
         return np.random.default_rng().uniform(low, high, 1)
 
     def fast_9x9_window(self, distances, res_x, res_y, disparity_map,
@@ -382,6 +382,11 @@ class Kinect(object):
             self.noisy_max_dist = self.get_noisy_max()
             self.noisy_min_dist = self.get_noisy_min()
             self.noisy_flength = self.get_noisy_flength()
+        # Or use the ground truth
+        else:
+            self.noisy_max_dist = self.get_noisy_max(0.)
+            self.noisy_min_dist = self.get_noisy_min(0.)
+            self.noisy_flength = self.get_noisy_flength(0.)
         
         # Rays from projector
         projector_rays = self.emit_projector(pybullet, show_scan)
@@ -406,7 +411,10 @@ class Kinect(object):
         # Add random shifting in the value of depth + gaussian noise that
         # depends on depth values.
         #depth_img = self.add_shift_noise(depth_img)
-        depth_img = self.add_axial_noise(depth_img)
+        if add_noise:
+            depth_img = self.add_axial_noise(depth_img)
+        else:
+            pass
         # Assure that depth values are positives, {0} U [min_dist, max_dist]
         depth_img[depth_img < self.noisy_min_dist] = 0.
         depth_img[depth_img > self.noisy_max_dist] = 0.
