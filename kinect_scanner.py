@@ -266,7 +266,7 @@ class Kinect(object):
             for i in range(results.shape[0]):
                 for j in range(results.shape[1]):
                     if (i%40 == 0) and (j%40==0):
-                        pybullet.addUserDebugLine([0, 0, 0], results[i, j, :].tolist(),
+                        pybullet.addUserDebugLine([0., 0., 0.], results[i, j, :].tolist(),
                                                   [1, 0, 0],
                                                   parentObjectUniqueId=self.kinect_id,
                                                   physicsClientId=self.id_server)
