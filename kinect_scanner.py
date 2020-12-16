@@ -46,8 +46,9 @@ class Kinect(object):
     # Intrinsic parameters of the kinect
     # BE CAREFULL : min_dist and max_dist need to be tuned with your real kinect
     # It can changed with the mode (default or near) and hardware.
-    parameters = {"max_dist": 7.0, "min_dist": 0.4, "noise_mu": 0.0,
-                  "noise_sigma": 0.0, "xres": 640, "yres": 480,
+    # Default : noise_mu = 0., noise_sigma = 0., noise_scale = 0.25, noise_smooth = 1.5
+    parameters = {"max_dist": 7.0, "min_dist": 0.4, "noise_mu": 0.,
+                  "noise_sigma": 0.2, "xres": 640, "yres": 480,
                   "flength": 4.73, "reflectivity_distance": 0.0,
                   "reflectivity_limit": 0.01, "reflectivity_slope": 0.16,
                   "noise_scale": 0.25, "noise_smooth": 1.5,
@@ -117,8 +118,8 @@ class Kinect(object):
         noisy_image = img.copy()
         ci, ri = np.meshgrid(np.arange(0, img.shape[1], 1),
                              np.arange(0, img.shape[0], 1))
-        col_index = ci + np.random.normal(0, 0.5, img.shape).astype(np.int32)
-        row_index = ri + np.random.normal(0, 0.5, img.shape).astype(np.int32)
+        col_index = ci + np.random.normal(0, 1, img.shape).astype(np.int32)
+        row_index = ri + np.random.normal(0, 1, img.shape).astype(np.int32)
 
         col_index[col_index >= img.shape[1]] = img.shape[1] - 1
         row_index[row_index >= img.shape[0]] = img.shape[0] - 1
@@ -394,6 +395,7 @@ class Kinect(object):
         camera_rays = self.emit_camera(pybullet, projector_rays, show_scan, add_reflectivity)
         # Disparity map
         all_quantized_disparities, camera_coord = self.disparity_map(projector_rays, camera_rays)
+
         # Window 9x9 matching for disparity map
         processed_disparities = np.empty(self.parameters["xres"]*self.parameters["yres"])
         self.fast_9x9_window(all_quantized_disparities, self.parameters["xres"],
@@ -402,6 +404,8 @@ class Kinect(object):
                              self.parameters["noise_scale"])
         # Use the process disparity
         disparity_quantized = processed_disparities
+        
+        #disparity_quantized = all_quantized_disparities
         depth_idx = (disparity_quantized.reshape((self.parameters["yres"], self.parameters["xres"])) < self.INVALID_DISPARITY) & \
                     (disparity_quantized.reshape((self.parameters["yres"], self.parameters["xres"])) != 0.0)
 
