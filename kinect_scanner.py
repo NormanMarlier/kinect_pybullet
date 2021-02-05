@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append('..')
 import kinect_pybullet
+from perlin_numpy import generate_perlin_noise_2d
+
 
 
 class KinectDots(object):
@@ -95,6 +97,30 @@ class Kinect(object):
         X,Z are in meters, flength is in pixel
         """
         return (flength_px*X/Z)
+    
+    @classmethod
+    def get_pts3d_from_depth(cls, depth_img):
+        """Return the 3d point cloud assiciated with the depth map.
+        
+        [x, y, z, 1] = z@inverse_matrix@[u, v, 1, 1/z]
+        """ 
+        fx = cls.parameters["flength"]
+        fy = cls.parameters["flength"]
+        cy = cls.parameters["xres"]/2
+        cx = cls.parameters["yres"]/2 
+        
+        u = np.linspace(0, depth_img.shape[0]-1, depth_img.shape[0])
+        v = np.linspace(0, depth_img.shape[1]-1, depth_img.shape[1])
+        vv, uu = np.meshgrid(v, u)
+    
+        x = depth_img*(cx - uu)/fx*cls.parameters["pixel_height"]
+        y = depth_img*(cy - vv)/fy*cls.parameters["pixel_width"]
+        pts_3d = np.concatenate((x.reshape((x.shape[0], x.shape[1], 1)),
+                                 y.reshape((y.shape[0], y.shape[1], 1)),
+                                 depth_img.reshape((depth_img.shape[0], depth_img.shape[1], 1))),
+                                axis=-1).reshape((-1, 3))
+        
+        return pts_3d
 
     def add_shift_noise(self, img):
         """Add noise by randomly shifting depth values and gaussian noise.
@@ -154,6 +180,16 @@ class Kinect(object):
         
         noisy_img = depth_img + depth_noise
 
+        return noisy_img
+    
+    def add_perlin_noise(self, depth_img):
+        """Add perlin noise for some value of the depth."""
+        max_amplitude = 0.007  # 7mm
+        perlin_noise = max_amplitude*generate_perlin_noise_2d(depth_img.shape, (48, 64))
+        depth_index = (depth_img > 0.5) & (depth_img < 1.5)
+        noisy_img = depth_img.copy()
+        noisy_img[depth_index] += perlin_noise[depth_index]
+        
         return noisy_img
     
     def get_noisy_min(self, sigma=0.005):
@@ -408,22 +444,29 @@ class Kinect(object):
         #disparity_quantized = all_quantized_disparities
         depth_idx = (disparity_quantized.reshape((self.parameters["yres"], self.parameters["xres"])) < self.INVALID_DISPARITY) & \
                     (disparity_quantized.reshape((self.parameters["yres"], self.parameters["xres"])) != 0.0)
-
+                    
         # Depth img based on disparity map
         depth_img = np.zeros((self.parameters["yres"], self.parameters["xres"]))
         depth_img[depth_idx] = -projector_rays[depth_idx][:, 2]
-        # Add random shifting in the value of depth + gaussian noise that
-        # depends on depth values.
-        #depth_img = self.add_shift_noise(depth_img)
+        # 3 types of noise
         if add_noise:
+            # Add random shifting in the value of depth
+            #depth_img = self.add_shift_noise(depth_img)
+            # Add gamma noise
+            #depth_img = self.add_gamma_noise(depth_img)
+            # Add perlin noise in a given range
+            #depth_img = self.add_perlin_noise(depth_img)
+            # Add gaussian noise where the variance depends on depth values.
             depth_img = self.add_axial_noise(depth_img)
+            
         else:
             pass
         # Assure that depth values are positives, {0} U [min_dist, max_dist]
         depth_img[depth_img < self.noisy_min_dist] = 0.
         depth_img[depth_img > self.noisy_max_dist] = 0.
-
+    
         return depth_img
+        
 
 def test_kinect_scan():
     import pybullet as p
@@ -444,6 +487,30 @@ def test_kinect_scan():
     plt.show()
     # Disconnect from pybullet
     p.disconnect(id_server)
+
+
+def test_3d_pts_cloud_scan():
+    import pybullet as p
+    import pybullet_data
+    import trimesh
+    # Connect to the pybullet server and get additional data
+    id_server = p.connect(p.GUI)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    # Add object
+    p.loadURDF('plane.urdf')
+    p.loadURDF("r2d2.urdf", [0, 0, 0.5], [0., 0., np.sin(np.pi/2), np.cos(np.pi/2)])
+    # Kinect object
+    kinect = Kinect(p, [0., -1.7, 1.2], [np.sin(np.pi/5), 0, 0, np.cos(np.pi/5)], id_server)
+    # Scan 
+    depth_img = kinect.scan(p)
+    pts3d = kinect.get_pts3d_from_depth(depth_img)
+    print("Shape", pts3d.shape)
+    
+    mesh = trimesh.Trimesh(vertices=pts3d)
+    mesh.export("test_3dpts.ply")
+    # Disconnect from pybullet
+    p.disconnect(id_server)
+    
 
 
 def compare_depth_map():
@@ -495,8 +562,10 @@ def compare_depth_map():
 
 if __name__ == "__main__":
     # Show the rays casting
-    test_kinect_scan()
+    #test_kinect_scan()
     # Compare to OpenGL buffer
-    compare_depth_map()
+    #compare_depth_map()
+    # Show 3d point cloud
+    test_3d_pts_cloud_scan()
     
     
