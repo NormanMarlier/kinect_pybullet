@@ -102,8 +102,9 @@ class Kinect(object):
     def get_pts3d_from_depth(cls, depth_img):
         """Return the 3d point cloud assiciated with the depth map.
         
-        [x, y, z, 1] = z@inverse_matrix@[u, v, 1, 1/z]
-        """ 
+        x = downward
+        y = rightward
+        """
         fx = cls.parameters["flength"]
         fy = cls.parameters["flength"]
         cy = cls.parameters["xres"]/2
@@ -113,14 +114,25 @@ class Kinect(object):
         v = np.linspace(0, depth_img.shape[1]-1, depth_img.shape[1])
         vv, uu = np.meshgrid(v, u)
     
-        x = depth_img*(cx - uu)/fx*cls.parameters["pixel_height"]
-        y = depth_img*(cy - vv)/fy*cls.parameters["pixel_width"]
+        x = depth_img*(cx - vv)/fx*cls.parameters["pixel_height"]
+        y = depth_img*(cy - uu)/fy*cls.parameters["pixel_width"]
         pts_3d = np.concatenate((x.reshape((x.shape[0], x.shape[1], 1)),
                                  y.reshape((y.shape[0], y.shape[1], 1)),
                                  depth_img.reshape((depth_img.shape[0], depth_img.shape[1], 1))),
                                 axis=-1).reshape((-1, 3))
         
         return pts_3d
+    
+    @classmethod
+    def convert_depth_img_for_pts3d(cls, depth_img):
+        """Convert the depth from simulated image into a valid format."""
+        if len(depth_img.shape) == 3:
+            return -np.flipud(depth_img[0])
+        elif len(depth_img.shape) == 2:
+            return -np.flipud(depth_img.reshape((1, 480, 640))[0])
+        else:
+            raise ValueError("Not a valid shape")
+            
 
     def add_shift_noise(self, img):
         """Add noise by randomly shifting depth values and gaussian noise.
@@ -154,6 +166,13 @@ class Kinect(object):
         
         noisy_img = noisy_image[row_index, col_index]
 
+        return noisy_img
+    
+    def add_gamma_noise(self, depth_img):
+        """Apply gamma noise to the depth img."""
+        shape, scale = 0.1, 0.01
+        noisy_img = depth_img + np.random.gamma(shape, scale, depth_img.shape)
+        
         return noisy_img
 
     def add_axial_noise(self, depth_img):
@@ -455,7 +474,7 @@ class Kinect(object):
             # Add gamma noise
             #depth_img = self.add_gamma_noise(depth_img)
             # Add perlin noise in a given range
-            #depth_img = self.add_perlin_noise(depth_img)
+            depth_img = self.add_perlin_noise(depth_img)
             # Add gaussian noise where the variance depends on depth values.
             depth_img = self.add_axial_noise(depth_img)
             
